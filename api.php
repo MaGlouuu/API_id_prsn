@@ -2,7 +2,7 @@
 // Définit l'en-tête HTTP pour indiquer que la réponse sera au format JSON
 header("Content-Type: application/json");
 
-// Inclut le fichier de configuration (qui contient les informations de connexion à la BDD)
+// Inclut le fichier de configuration (qui contient les informations de connexion à la BDD
 require 'config.php';
 
 // Vérifie si le mot de passe crypté est passé en paramètre dans l'URL
