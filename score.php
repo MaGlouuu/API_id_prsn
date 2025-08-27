@@ -1,89 +1,92 @@
 <?php
-header("Content-Type: application/json; charset=UTF-8");
+header("Content-Type: application/json");
+require 'config.php';
 
-require 'config.php';  // Le fichier config.php contient les informations de la base de données
-require 'encrypt_password.php';  // Le fichier encrypt_password.php contient la clé de déchiffrement
-
-// Lire les paramètres envoyés via GET
-$encrypted_password = isset($_GET['encrypted_password']) ? $_GET['encrypted_password'] : '';
-$nom = isset($_GET['nom']) ? $_GET['nom'] : '';
-$prenom = isset($_GET['prenom']) ? $_GET['prenom'] : '';
-$id_match = isset($_GET['id_match']) ? $_GET['id_match'] : '';
-$resultat = isset($_GET['resultat']) ? $_GET['resultat'] : '';
-$mode_de_jeu = isset($_GET['mode_de_jeu']) ? $_GET['mode_de_jeu'] : '';
-
-// Vérifier que toutes les données sont présentes
-if (empty($encrypted_password) || empty($nom) || empty($prenom) || empty($resultat) || empty($mode_de_jeu) || empty($id_match)) {
-    echo json_encode(["status" => "error", "message" => "Données manquantes"]);
+// Vérifie que les paramètres requis sont bien fournis
+if (!isset($_GET['encrypted_password'], $_GET['nom'], $_GET['prenom'], $_GET['id_match'], $_GET['resultat'], $_GET['mode_de_jeu'])) {
+    echo json_encode(["status" => "error", "message" => "Paramètres manquants."]);
     exit;
 }
 
-// Déchiffrer le mot de passe
-$decrypted_password = openssl_decrypt($encrypted_password, 'AES-256-CBC', $key, 0, $iv);
+// Récupération des données
+$encrypted_password = $_GET['encrypted_password'];
+$nom = $_GET['nom'];
+$prenom = $_GET['prenom'];
+$id_match = (int)$_GET['id_match'];
+$resultat = $_GET['resultat'];
+$mode_de_jeu = $_GET['mode_de_jeu'];
 
-// Si le mot de passe ne se déchiffre pas correctement
+// Clé de décryptage
+$key = "ma_cle_secrete_32_bytes";
+$iv = "1234567890123456";
+
+// Décryptage du mot de passe
+$decrypted_password = openssl_decrypt($encrypted_password, 'AES-256-CBC', $key, 0, $iv);
 if (!$decrypted_password) {
-    echo json_encode(["status" => "error", "message" => "Échec du déchiffrement du mot de passe"]);
+    echo json_encode(["status" => "error", "message" => "Échec du décryptage du mot de passe."]);
     exit;
 }
 
 // Connexion à la base de données
 $conn = new mysqli($host, $user, $decrypted_password, $dbname);
-
-// Vérifier la connexion
 if ($conn->connect_error) {
-    echo json_encode(["status" => "error", "message" => "Connexion échouée: " . $conn->connect_error]);
+    echo json_encode(["status" => "error", "message" => "Échec de la connexion à la base de données."]);
     exit;
 }
 
-// Récupérer l'ID du joueur (nom et prénom)
-$sql_id = "SELECT id_personne FROM Personnes WHERE nom = ? AND prenom = ?";
-$stmt_id = $conn->prepare($sql_id);
-$stmt_id->bind_param("ss", $nom, $prenom);
-$stmt_id->execute();
-$result_id = $stmt_id->get_result();
+// Récupération de l'ID de la personne
+$stmt = $conn->prepare("SELECT id_personne FROM Personnes WHERE nom = ? AND prenom = ?");
+$stmt->bind_param("ss", $nom, $prenom);
+$stmt->execute();
+$result = $stmt->get_result();
+if ($result->num_rows === 0) {
+    echo json_encode(["status" => "error", "message" => "Joueur introuvable."]);
+    $stmt->close();
+    $conn->close();
+    exit;
+}
+$row = $result->fetch_assoc();
+$id_personne = $row['id_personne'];
+$stmt->close();
 
-if ($row = $result_id->fetch_assoc()) {
-    $id_personne = $row['id_personne'];
+// Vérifie que le match existe
+$stmtMatch = $conn->prepare("SELECT id_match FROM Matches WHERE id_match = ?");
+$stmtMatch->bind_param("i", $id_match);
+$stmtMatch->execute();
+$resultMatch = $stmtMatch->get_result();
+if ($resultMatch->num_rows === 0) {
+    echo json_encode(["status" => "error", "message" => "Le match avec ID $id_match n'existe pas."]);
+    $stmtMatch->close();
+    $conn->close();
+    exit;
+}
+$stmtMatch->close();
 
-    // Vérifier si le score pour ce joueur et ce match existe déjà dans la table "Jouer"
-    $sql_check_score = "SELECT id_personne, id_match FROM Jouer WHERE id_personne = ? AND id_match = ?";
-    $stmt_check_score = $conn->prepare($sql_check_score);
-    $stmt_check_score->bind_param("ii", $id_personne, $id_match);
-    $stmt_check_score->execute();
-    $result_check_score = $stmt_check_score->get_result();
+// Vérifie si le joueur a déjà un score pour ce match
+$stmtCheck = $conn->prepare("SELECT * FROM Jouer WHERE id_personne = ? AND id_match = ?");
+$stmtCheck->bind_param("ii", $id_personne, $id_match);
+$stmtCheck->execute();
+$resultCheck = $stmtCheck->get_result();
 
-    if ($result_check_score->num_rows > 0) {
-        // Si le score existe déjà, mettre à jour le score
-        $sql_update = "UPDATE Jouer SET resultat = ?, mode_de_jeu = ? WHERE id_personne = ? AND id_match = ?";
-        $stmt_update = $conn->prepare($sql_update);
-        $stmt_update->bind_param("ssii", $resultat, $mode_de_jeu, $id_personne, $id_match);
-
-        if ($stmt_update->execute()) {
-            echo json_encode(["status" => "success", "message" => "Score mis à jour"]);
-        } else {
-            echo json_encode(["status" => "error", "message" => "Erreur lors de la mise à jour du score"]);
-        }
-        $stmt_update->close();
-    } else {
-        // Si le score n'existe pas, insérer un nouveau score
-        $sql_insert = "INSERT INTO Jouer (id_personne, id_match, resultat, mode_de_jeu) VALUES (?, ?, ?, ?)";
-        $stmt_insert = $conn->prepare($sql_insert);
-        $stmt_insert->bind_param("iiss", $id_personne, $id_match, $resultat, $mode_de_jeu);
-
-        if ($stmt_insert->execute()) {
-            echo json_encode(["status" => "success", "message" => "Score enregistré"]);
-        } else {
-            echo json_encode(["status" => "error", "message" => "Erreur lors de l'insertion"]);
-        }
-        $stmt_insert->close();
-    }
-
-    $stmt_check_score->close();
+if ($resultCheck->num_rows > 0) {
+    // Mise à jour du score existant
+    $stmtUpdate = $conn->prepare("UPDATE Jouer SET resultat = ?, mode_de_jeu = ? WHERE id_personne = ? AND id_match = ?");
+    $stmtUpdate->bind_param("ssii", $resultat, $mode_de_jeu, $id_personne, $id_match);
+    $stmtUpdate->execute();
+    $stmtUpdate->close();
+    $message = "Score mis à jour";
 } else {
-    echo json_encode(["status" => "error", "message" => "Utilisateur non trouvé"]);
+    // Insertion d'un nouveau score
+    $stmtInsert = $conn->prepare("INSERT INTO Jouer (id_personne, id_match, resultat, mode_de_jeu) VALUES (?, ?, ?, ?)");
+    $stmtInsert->bind_param("iiss", $id_personne, $id_match, $resultat, $mode_de_jeu);
+    $stmtInsert->execute();
+    $stmtInsert->close();
+    $message = "Score ajouté";
 }
 
-$stmt_id->close();
+$stmtCheck->close();
 $conn->close();
+
+// Réponse finale
+echo json_encode(["status" => "success", "message" => $message]);
 ?>

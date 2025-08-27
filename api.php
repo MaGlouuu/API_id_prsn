@@ -1,5 +1,4 @@
 <?php
-// Définit l'en-tête HTTP pour indiquer que la réponse sera au format JSON
 header("Content-Type: application/json");
 
 // Inclut le fichier de configuration (qui contient les informations de connexion à la BDD
@@ -13,7 +12,7 @@ if (!isset($_GET['encrypted_password'])) {
 // Récupère le mot de passe crypté depuis l'URL
 $encrypted_password = $_GET['encrypted_password']; 
 
-// Clé et IV (vecteur d'initialisation) pour le décryptage AES-256-CBC
+// Décryptage AES-256-CBC
 $key = "ma_cle_secrete_32_bytes"; 
 $iv = "1234567890123456"; 
 
